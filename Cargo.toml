@@ -1,0 +1,25 @@
+[package]
+name = "protoview"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# GUI
+eframe = "0.36.2"
+egui = "0.36.2"
+rfd = "0.17.2" # File picker dialogs
+# ProtoBuf
+protobin = "0.6.0" # ProtoBuf wire format decoder
+protox = "0.10.0"
+# Utils
+itertools = "0.15.0" # Iterators
+tokio_with_wasm = { version = "0.9.2", features = ["rt", "sync"] }
+tracing = "0.1.44"
+tracing-log = "0.2.0"
+tracing-subscriber = "0.3.23"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.79"
+web-sys = "0.3.106"
+tracing-wasm = "0.2.1"
+console_error_panic_hook = "0.1.7"
