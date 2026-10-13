@@ -1,13 +1,17 @@
-use tracing::debug;
-use tracing_subscriber::filter::{Targets, LevelFilter};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use eyre::{eyre, OptionExt};
 use crate::app::ProtoViewApp;
 
 mod app;
+mod protobuf;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    tracing_log::LogTracer::init().unwrap();
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _rt = rt.enter();
+
     let native_opts = eframe::NativeOptions::default();
     eframe::run_native(
         "ProtoView",
@@ -17,10 +21,36 @@ fn main() {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn try_create_panic_message(panic_hook_info: &std::panic::PanicHookInfo, document: &web_sys::Document) -> eyre::Result<()> {
+    let body = document.body().ok_or_eyre("no body in document")?;
+    let div = document.create_element("div").map_err(|e| eyre!("{:?}", e))?;
+    div.set_class_name("error_message");
+    div.set_inner_html(&format!(
+        "<h1>🦀 Rust panicked!</h1><pre>{}</pre>",
+        panic_hook_info,
+    ));
+    body.append_child(&div).map_err(|e| eyre!("{:?}", e))?;
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn panic_hook(panic_hook_info: &std::panic::PanicHookInfo) {
+    if let Some(window) = web_sys::window() && let Some(document) = window.document() {
+        let _ = try_create_panic_message(panic_hook_info, &document);
+    }
+
+    console_error_panic_hook::hook(panic_hook_info);
+}
+
+#[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast;
+    use tracing_subscriber::filter::{Targets, LevelFilter};
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
-    console_error_panic_hook::set_once();
+    std::panic::set_hook(Box::new(panic_hook));
+
     tracing_log::LogTracer::init().unwrap();
 
     let _ = tracing_subscriber::registry()

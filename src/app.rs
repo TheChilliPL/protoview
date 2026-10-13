@@ -1,33 +1,62 @@
-use std::borrow::Cow;
 use eframe::Frame;
 use eframe::epaint::text::TextWrapMode;
 use egui::text::LayoutJob;
-use egui::{CentralPanel, CollapsingHeader, Color32, MenuBar, Panel, ScrollArea, TextFormat, TextStyle, Ui};
-use protobin::decode::{MsgDecoder, MsgRecordRef};
-use protobin::wire::WireValueRef;
+use egui::{CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea, TextFormat, TextStyle, Ui};
+use rfd::AsyncFileDialog;
+use std::borrow::Cow;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
-use rfd::AsyncFileDialog;
 use tokio_with_wasm::alias as tokio;
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
+use crate::protobuf::schema::ProtobufSchema;
+use crate::protobuf::wire_types::WireValue;
+use crate::protobuf::ProtobufDecoder;
 use tracing::debug;
+
+pub enum Message {
+    OpenBuffer(Box<[u8]>),
+    OpenSchema(ProtobufSchema),
+    ClearSchema,
+}
 
 pub struct ProtoViewApp {
     msg: Option<Box<[u8]>>,
+    schema: Option<ProtobufSchema>,
+    rx: tokio::sync::mpsc::Receiver<Message>,
+    tx: tokio::sync::mpsc::Sender<Message>,
 }
 
 impl ProtoViewApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
         Self {
             msg: None,
+            schema: None,
+            rx, tx,
         }
     }
 }
 
 impl eframe::App for ProtoViewApp {
-    fn ui(&mut self, ui: &mut Ui, frame: &mut Frame) {
+    fn logic(&mut self, _ctx: &Context, _frame: &mut Frame) {
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                Message::OpenBuffer(buffer) => {
+                    self.msg = Some(buffer);
+                }
+                Message::OpenSchema(schema) => {
+                    self.schema = Some(schema);
+                }
+                Message::ClearSchema => {
+                    self.schema = None;
+                }
+            }
+        }
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
         Panel::top("top_panel").show(ui, |ui| {
             MenuBar::new().ui(ui, |ui| {
                 ui.heading("ProtoView");
@@ -37,29 +66,29 @@ impl eframe::App for ProtoViewApp {
                             .add_filter("Protobuf Wire Format", &["bin", "binpb"])
                             .add_filter("All files", &["*"])
                             .pick_file();
-                        tokio::spawn(async {
-                            let file = dialog_res.await;
-
-                            debug!("Opening file: {:?}", file);
+                        let tx = self.tx.clone();
+                        tokio::spawn(async move {
+                            if let Some(file) = dialog_res.await {
+                                debug!("Opening file: {:?}", file);
+                                let bytes = file.read().await.into_boxed_slice();
+                                tx.send(Message::OpenBuffer(bytes)).await.expect("couldn't send message");
+                            }
                         });
-                        // if let Some(path) = dialog_res {
-                        //     let mut file = File::open(path).unwrap();
-                        //     let mut bytes = Vec::new();
-                        //     file.read_to_end(&mut bytes).unwrap();
-                        //     self.msg = Some(bytes.into_boxed_slice());
-                        // }
                     }
                     if ui.button("Open schema").clicked() {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            let dialog_res = FileDialog::new()
-                                .add_filter("Protobuf Schema File", &["proto"])
-                                .add_filter("All files", &["*"])
-                                .pick_file();
-                            if let Some(path) = dialog_res {
-                                println!("Loading Context from {}", path.display());
+                        let dialog_res = AsyncFileDialog::new()
+                            .add_filter("Protobuf Schema File", &["proto"])
+                            .add_filter("All files", &["*"])
+                            .pick_file();
+                        let tx = self.tx.clone();
+                        tokio::spawn(async move {
+                            if let Some(file) = dialog_res.await {
+                                debug!("Opening schema: {:?}", file);
+                                let bytes = file.read().await.into_boxed_slice();
+                                let schema = ProtobufSchema::compile_new(bytes).unwrap();
+                                tx.send(Message::OpenSchema(schema)).await.expect("couldn't send message");
                             }
-                        }
+                        });
                     };
                 })
             })
@@ -78,14 +107,11 @@ impl eframe::App for ProtoViewApp {
 
         CentralPanel::default().show(ui, |ui| {
             if let Some(data) = self.msg.as_deref() {
-                let decoder = MsgDecoder::new(data);
-
-                let data = decoder.collect::<Result<Vec<_>, _>>().unwrap();
-
                 ScrollArea::new(true)
                     .show(ui, |ui| {
+                        let decoder = ProtobufDecoder::with_schema(data, self.schema.as_ref());
 
-                        show_records(ui, &data);
+                        show_records(ui, decoder);
 
                         ui.take_available_space();
                     });
@@ -96,9 +122,9 @@ impl eframe::App for ProtoViewApp {
     }
 }
 
-fn show_records(ui: &mut Ui, data: &[MsgRecordRef]) {
+fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
     let mut hash = DefaultHasher::new();
-    data.hash(&mut hash);
+    decoder.data().hash(&mut hash);
     let hash = hash.finish();
 
     let weak_format = TextFormat::simple(
@@ -114,19 +140,39 @@ fn show_records(ui: &mut Ui, data: &[MsgRecordRef]) {
         ui.visuals().strong_text_color(),
     );
 
-    for (i, record) in data.iter().enumerate() {
-        let field_num = record.field_number.value();
+    for (i, record) in decoder.enumerate() {
+        let record = match record {
+            Ok(record) => record,
+            Err(e) => {
+                ui.colored_label(Color32::RED, format!("Error parsing: {}", e));
+                return;
+            }
+        };
+
+        let field_num = record.field_number;
         let mut lj = LayoutJob::default();
         lj.append(
             &format!("{}. ", field_num),
             18.0,
             weak_format.clone(),
         );
+        if let Some(name) = record.name {
+            lj.append(
+                &name,
+                0.0,
+                normal_format.clone(),
+            );
+            lj.append(
+                " = ",
+                0.0,
+                weak_format.clone(),
+            );
+        }
         match record.value {
-            WireValueRef::VarInt(v) => {
-                let unsigned = v.as_uint64();
-                let signed = v.as_int64();
-                let zigzag = v.as_sint64();
+            WireValue::VarInt(v) => {
+                let unsigned = v.as_u64();
+                let signed = v.as_i64();
+                let zigzag = v.as_s64();
 
                 if signed >= 0 && signed as u64 == unsigned {
                     lj.append(
@@ -170,8 +216,15 @@ fn show_records(ui: &mut Ui, data: &[MsgRecordRef]) {
                 }
                 ui.label(lj);
             }
-            WireValueRef::Len(v) => {
-                if v.data.is_empty() {
+            WireValue::LengthDelimited(v) => {
+                if let Some(path) = v.path() {
+                    lj.append(
+                        &format!("[{}] ", path),
+                        0.0,
+                        weak_format.clone(),
+                    );
+                }
+                if v.as_bytes().is_empty() {
                     lj.append(
                         "[empty]",
                         0.0,
@@ -181,55 +234,38 @@ fn show_records(ui: &mut Ui, data: &[MsgRecordRef]) {
                     continue;
                 }
 
-                let subdata = v.as_sub_msg().collect::<Result<Vec<_>, _>>();
-                let str = str::from_utf8(v.data);
-                let is_str = str.is_ok() && str.unwrap().chars().all(|c| !c.is_ascii_control());
+                let sub_decoder = v.sub_decoder();
+                let str = v.try_as_str();
+                let is_str = str.is_ok_and(|s| s.chars().all(|c| !c.is_ascii_control()));
 
-                if let Ok(subdata) = v.as_sub_msg().collect::<Result<Vec<_>, _>>() {
-                    if is_str {
-                        let str = str.unwrap();
-                        lj.append(
-                            &format!("{:?}", str),
-                            0.0,
-                            strong_format.clone(),
-                        );
-                        lj.append(
-                            " / ",
-                            0.0,
-                            weak_format.clone()
-                        );
-                    }
-                    lj.append(
-                        "[object]",
-                        0.0,
-                        normal_format.clone(),
-                    );
-                    lj.sections[0].leading_space = 0.0;
-                    CollapsingHeader::new(lj)
-                        .id_salt(hash + i as u64)
-                        .show(ui, |ui| {
-                            show_records(ui, &subdata);
-                        });
-                } else if is_str {
+                if is_str {
                     let str = str.unwrap();
                     lj.append(
                         &format!("{:?}", str),
                         0.0,
                         strong_format.clone(),
                     );
-                    ui.label(lj);
-                } else {
                     lj.append(
-                        "[bytes]",
+                        " / ",
                         0.0,
-                        normal_format.clone(),
+                        weak_format.clone()
                     );
-                    ui.label(lj);
                 }
+                lj.append(
+                    "[object] / [bytes]",
+                    0.0,
+                    weak_format.clone(),
+                );
+                lj.sections[0].leading_space = 0.0;
+                CollapsingHeader::new(lj)
+                    .id_salt(hash + i as u64)
+                    .show(ui, |ui| {
+                        show_records(ui, sub_decoder);
+                    });
             }
             other => {
                 lj.append(
-                    &format!("Unsupported wire type: {:?}", other.write_type()),
+                    &format!("Unsupported wire type: {:?}", other.wire_type()),
                     0.0,
                     TextFormat::simple(TextStyle::Body.resolve(ui.style()), Color32::RED),
                 );
