@@ -64,8 +64,8 @@ impl I64 {
     }
 }
 
-#[derive(Debug, Clone, From)]
-pub struct LengthDelimited<'a>(pub(super) &'a [u8], pub(super) Option<&'a ProtobufSchema>, pub(super) Option<String>);
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From)]
+pub struct LengthDelimited<'a>(pub(super) &'a [u8]);
 
 impl <'a> LengthDelimited<'a> {
     pub fn as_bytes(&self) -> &[u8] {
@@ -76,22 +76,10 @@ impl <'a> LengthDelimited<'a> {
         str::from_utf8(self.0)
     }
 
-    pub fn sub_decoder(&self) -> ProtobufDecoder<'_> {
-        ProtobufDecoder::with_schema_at_path(self.0, self.1, self.2.clone())
-    }
-    
-    pub fn path(&self) -> Option<&str> {
-        self.2.as_deref()
+    pub fn sub_decoder(&self, schema: Option<&'a ProtobufSchema>, path: Option<String>) -> ProtobufDecoder<'a> {
+        ProtobufDecoder::with_schema_at_path(self.0, schema, path)
     }
 }
-
-impl PartialEq<Self> for LengthDelimited<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Eq for LengthDelimited<'_> {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From)]
 pub struct I32(pub(super) u32);

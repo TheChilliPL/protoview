@@ -5,6 +5,16 @@ mod app;
 mod protobuf;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(clap::Parser)]
+struct Cli {
+    /// ProtoBuf data file path to open
+    input: Option<std::path::PathBuf>,
+    /// ProtoBuf schema file path to open
+    #[arg(short, long)]
+    schema: Option<std::path::PathBuf>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     tracing_log::LogTracer::init().unwrap();
     let _ = tracing_subscriber::fmt::try_init();
@@ -12,11 +22,17 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _rt = rt.enter();
 
+    let cli = <Cli as clap::Parser>::parse();
+
+    let buffer = cli.input.map(|path| std::fs::read(path).unwrap().into_boxed_slice());
+    let schema_data = cli.schema.map(|path| std::fs::read(path).unwrap().into_boxed_slice());
+    let schema = schema_data.map(|d| protobuf::schema::ProtobufSchema::compile_new(d).unwrap());
+
     let native_opts = eframe::NativeOptions::default();
     eframe::run_native(
         "ProtoView",
         native_opts,
-        Box::new(|cc| Ok(Box::new(ProtoViewApp::new(cc))))
+        Box::new(|cc| Ok(Box::new(ProtoViewApp::new_with_opts(cc, buffer, schema))))
     ).expect("couldn't create native app");
 }
 

@@ -29,3 +29,4 @@ console_error_panic_hook = "0.1.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.53.2", features = ["rt-multi-thread"] }
+clap = { version = "4.6.7", features = ["derive"] }

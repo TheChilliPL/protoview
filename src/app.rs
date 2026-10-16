@@ -30,10 +30,18 @@ pub struct ProtoViewApp {
 
 impl ProtoViewApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        Self::new_with_opts(_cc, None, None)
+    }
+
+    pub fn new_with_opts(
+        _cc: &eframe::CreationContext<'_>,
+        msg: Option<Box<[u8]>>,
+        schema: Option<ProtobufSchema>,
+    ) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         Self {
-            msg: None,
-            schema: None,
+            msg,
+            schema,
             rx, tx,
         }
     }
@@ -140,7 +148,7 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
         ui.visuals().strong_text_color(),
     );
 
-    for (i, record) in decoder.enumerate() {
+    for (i, record) in decoder.clone().enumerate() {
         let record = match record {
             Ok(record) => record,
             Err(e) => {
@@ -156,9 +164,9 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
             18.0,
             weak_format.clone(),
         );
-        if let Some(name) = record.name {
+        if let Some(name) = &record.name {
             lj.append(
-                &name,
+                name,
                 0.0,
                 normal_format.clone(),
             );
@@ -217,7 +225,7 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                 ui.label(lj);
             }
             WireValue::LengthDelimited(v) => {
-                if let Some(path) = v.path() {
+                if let Some(path) = &record.protobuf_type_name {
                     lj.append(
                         &format!("[{}] ", path),
                         0.0,
@@ -234,7 +242,7 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                     continue;
                 }
 
-                let sub_decoder = v.sub_decoder();
+                let sub_decoder = v.sub_decoder(decoder.schema(), record.protobuf_type_name);
                 let str = v.try_as_str();
                 let is_str = str.is_ok_and(|s| s.chars().all(|c| !c.is_ascii_control()));
 

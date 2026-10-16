@@ -4,9 +4,11 @@ use schema::ProtobufSchema;
 use std::iter::FusedIterator;
 use std::ops::Deref;
 use wire_types::{WireType, WireValue};
+use crate::protobuf::types::ProtobufType;
 
 pub mod schema;
 pub mod wire_types;
+mod types;
 
 #[derive(Clone)]
 pub struct ProtobufDecoder<'a> {
@@ -30,6 +32,10 @@ impl <'a> ProtobufDecoder<'a> {
 
     pub fn data(&self) -> &'a [u8] {
         self.data
+    }
+
+    pub fn schema(&self) -> Option<&ProtobufSchema> {
+        self.schema
     }
 
     fn fuse(&mut self) {
@@ -75,7 +81,7 @@ impl <'a> ProtobufDecoder<'a> {
         let value = match wire_type {
             Ok(WireType::VarInt) => WireValue::VarInt(self.decode_varint()?.into()),
             Ok(WireType::I64) => WireValue::I64(self.decode_i64()?.into()),
-            Ok(WireType::LengthDelimited) => WireValue::LengthDelimited((self.decode_length_delimited()?, self.schema, field_type_message_name).into()),
+            Ok(WireType::LengthDelimited) => WireValue::LengthDelimited(self.decode_length_delimited()?.into()),
             Ok(WireType::StartGroup) => WireValue::StartGroup,
             Ok(WireType::EndGroup) => WireValue::EndGroup,
             Ok(WireType::I32) => WireValue::I32(self.decode_i32()?.into()),
@@ -92,6 +98,8 @@ impl <'a> ProtobufDecoder<'a> {
             field_number,
             value,
             name: field.and_then(|f| f.name.clone()),
+            protobuf_type: field_type.and_then(|it| it.try_into().ok()),
+            protobuf_type_name: field_type_message_name
         })
     }
 
@@ -180,6 +188,8 @@ pub struct DecodedEntry<'a> {
     pub field_number: u8,
     pub value: WireValue<'a>,
     pub name: Option<String>,
+    pub protobuf_type: Option<ProtobufType>,
+    pub protobuf_type_name: Option<String>,
 }
 
 #[cfg(test)]
@@ -203,12 +213,12 @@ mod tests {
         let mut decoder = ProtobufDecoder::new(DATA);
 
         assert_eq!(decoder.data.len(), 3);
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[1..],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 1,
             value: WireValue::VarInt(VarInt(150)),
-            name: None,
-        });
+            ..
+        } if range == &DATA[1..]);
         assert_eq!(decoder.data.len(), 0);
         assert!(decoder.next().is_none());
     }
@@ -231,19 +241,19 @@ mod tests {
 
         let mut decoder = ProtobufDecoder::new(DATA);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[1..6],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 1,
-            value: WireValue::VarInt(VarInt(u32::MAX as u64)),
-            name: None,
-        });
+            value: WireValue::VarInt(VarInt(value)),
+            ..
+        } if range == &DATA[1..6] && value == u32::MAX as u64);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[7..],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 2,
-            value: WireValue::VarInt(VarInt(u64::MAX)),
-            name: None,
-        });
+            value: WireValue::VarInt(VarInt(value)),
+            ..
+        } if range == &DATA[7..] && value == u64::MAX);
 
         assert!(decoder.next().is_none());
     }
@@ -255,15 +265,13 @@ mod tests {
         let mut decoder = ProtobufDecoder::new(DATA);
 
         assert_eq!(decoder.data.len(), 6);
-        assert_eq!(
-            decoder.next().unwrap().unwrap(),
-            DecodedEntry {
-                range: &DATA[1..],
-                field_number: 1,
-                value: WireValue::VarInt(VarInt(1791921376)),
-                name: None,
-            }
-        );
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
+            field_number: 1,
+            value: WireValue::VarInt(VarInt(value)),
+            ..
+        } if range == &DATA[1..] && value == 1791921376);
+
         assert_eq!(decoder.data.len(), 0);
         assert!(decoder.next().is_none());
     }
@@ -277,19 +285,19 @@ mod tests {
 
         let mut decoder = ProtobufDecoder::new(DATA);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[1..5],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 1,
-            value: WireValue::I32(I32(u32::MAX)),
-            name: None,
-        });
+            value: WireValue::I32(I32(value)),
+            ..
+        } if range == &DATA[1..5] && value == u32::MAX);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[6..],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 2,
-            value: WireValue::I64(I64(u64::MAX)),
-            name: None,
-        });
+            value: WireValue::I64(I64(value)),
+            ..
+        } if range == &DATA[6..] && value == u64::MAX);
 
         assert!(decoder.next().is_none());
     }
@@ -302,12 +310,12 @@ mod tests {
 
         let mut decoder = ProtobufDecoder::new(DATA);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[1..],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 1,
-            value: WireValue::LengthDelimited(LengthDelimited(b"hello", None, None)),
-            name: None,
-        });
+            value: WireValue::LengthDelimited(LengthDelimited(value)),
+            ..
+        } if range == &DATA[1..] && value == b"hello");
 
         assert!(decoder.next().is_none());
     }
@@ -320,12 +328,12 @@ mod tests {
 
         let mut decoder = ProtobufDecoder::new(DATA);
 
-        assert_eq!(decoder.next().unwrap().unwrap(), DecodedEntry {
-            range: &DATA[1..],
+        assert_matches!(decoder.next().unwrap().unwrap(), DecodedEntry {
+            range,
             field_number: 1,
-            value: WireValue::LengthDelimited(LengthDelimited(&[], None, None)),
-            name: None,
-        });
+            value: WireValue::LengthDelimited(LengthDelimited(value)),
+            ..
+        } if range == &DATA[1..] && value == &[]);
 
         assert!(decoder.next().is_none());
     }
