@@ -67,7 +67,7 @@ impl I64 {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From)]
 pub struct LengthDelimited<'a>(pub(super) &'a [u8]);
 
-impl <'a> LengthDelimited<'a> {
+impl<'a> LengthDelimited<'a> {
     pub fn as_bytes(&self) -> &[u8] {
         self.0
     }
@@ -76,7 +76,11 @@ impl <'a> LengthDelimited<'a> {
         str::from_utf8(self.0)
     }
 
-    pub fn sub_decoder(&self, schema: Option<&'a ProtobufSchema>, path: Option<String>) -> ProtobufDecoder<'a> {
+    pub fn sub_decoder(
+        &self,
+        schema: Option<&'a ProtobufSchema>,
+        path: Option<String>,
+    ) -> ProtobufDecoder<'a> {
         ProtobufDecoder::with_schema_at_path(self.0, schema, path)
     }
 }

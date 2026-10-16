@@ -27,7 +27,9 @@ impl ProtobufSchema {
         let mut compiler = protox::Compiler::with_file_resolver(file_resolver);
         compiler.open_file("schema.proto")?;
 
-        Ok(ProtobufSchema { inner: compiler.file_descriptor_set() })
+        Ok(ProtobufSchema {
+            inner: compiler.file_descriptor_set(),
+        })
     }
 
     fn inner_file(&self) -> &prost_types::FileDescriptorProto {
@@ -42,11 +44,7 @@ impl ProtobufSchema {
         if Self::protopath_is_absolute(path) {
             Cow::Borrowed(path)
         } else {
-            Cow::Owned(format!(
-                "{}.{}",
-                root.trim_end_matches('.'),
-                path,
-            ))
+            Cow::Owned(format!("{}.{}", root.trim_end_matches('.'), path,))
         }
     }
 
@@ -75,17 +73,26 @@ impl ProtobufSchema {
         ))
     }
 
-    pub fn resolve_message_absolute(&self, path: &str) -> Option<(String, &prost_types::DescriptorProto)> {
-        let path = Self::protopath_to_relative(self.root_package().unwrap_or_default(), path).unwrap_or(path);
+    pub fn resolve_message_absolute(
+        &self,
+        path: &str,
+    ) -> Option<(String, &prost_types::DescriptorProto)> {
+        let path = Self::protopath_to_relative(self.root_package().unwrap_or_default(), path)
+            .unwrap_or(path);
 
         let mut split = path.split(".").filter(|it| !it.is_empty());
         let mut message = {
             let to_find = split.next()?;
-            self.inner_file().message_type.iter().find(|it| it.name() == to_find)
+            self.inner_file()
+                .message_type
+                .iter()
+                .find(|it| it.name() == to_find)
         };
 
         for str in split {
-            let Some(msg) = message else { break; };
+            let Some(msg) = message else {
+                break;
+            };
 
             message = msg.nested_type.iter().find(|it| it.name() == str);
         }
@@ -93,7 +100,11 @@ impl ProtobufSchema {
         message.map(|m| (path.to_string(), m))
     }
 
-    pub fn resolve_message(&self, mut from: &str, path: &str) -> Option<(String, &prost_types::DescriptorProto)> {
+    pub fn resolve_message(
+        &self,
+        mut from: &str,
+        path: &str,
+    ) -> Option<(String, &prost_types::DescriptorProto)> {
         let file = self.inner_file();
 
         loop {

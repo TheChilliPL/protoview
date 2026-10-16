@@ -1,14 +1,14 @@
+use crate::protobuf::types::ProtobufType;
 use derive_more::with_trait::From;
 use eyre::{WrapErr, bail, eyre};
 use schema::ProtobufSchema;
 use std::iter::FusedIterator;
 use std::ops::Deref;
 use wire_types::{WireType, WireValue};
-use crate::protobuf::types::ProtobufType;
 
 pub mod schema;
-pub mod wire_types;
 mod types;
+pub mod wire_types;
 
 #[derive(Clone)]
 pub struct ProtobufDecoder<'a> {
@@ -17,17 +17,35 @@ pub struct ProtobufDecoder<'a> {
     at_path: Option<String>,
 }
 
-impl <'a> ProtobufDecoder<'a> {
+impl<'a> ProtobufDecoder<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        ProtobufDecoder { data, schema: None, at_path: None }
+        ProtobufDecoder {
+            data,
+            schema: None,
+            at_path: None,
+        }
     }
 
     pub fn with_schema(data: &'a [u8], schema: Option<&'a ProtobufSchema>) -> Self {
-        ProtobufDecoder { data, schema, at_path: schema.and_then(|s| s.default_message_type()).map(|s| s.to_string()) }
+        ProtobufDecoder {
+            data,
+            schema,
+            at_path: schema
+                .and_then(|s| s.default_message_type())
+                .map(|s| s.to_string()),
+        }
     }
 
-    pub fn with_schema_at_path(data: &'a [u8], schema: Option<&'a ProtobufSchema>, at_path: Option<String>) -> Self {
-        ProtobufDecoder { data, schema, at_path }
+    pub fn with_schema_at_path(
+        data: &'a [u8],
+        schema: Option<&'a ProtobufSchema>,
+        at_path: Option<String>,
+    ) -> Self {
+        ProtobufDecoder {
+            data,
+            schema,
+            at_path,
+        }
     }
 
     pub fn data(&self) -> &'a [u8] {
@@ -72,16 +90,24 @@ impl <'a> ProtobufDecoder<'a> {
 
         let at = self.at_path.as_deref().unwrap_or_default();
         let parent_message = self.schema.and_then(|s| s.resolve_message_absolute(at));
-        let field = parent_message.as_ref().and_then(|(_, p)| p.field.iter().find(|f| f.number() == field_number as i32));
-        let field_type = field.and_then(|f| f.r#type );
+        let field = parent_message
+            .as_ref()
+            .and_then(|(_, p)| p.field.iter().find(|f| f.number() == field_number as i32));
+        let field_type = field.and_then(|f| f.r#type);
         let field_type_name = field.and_then(|f| f.type_name.as_deref());
-        let field_type_message = field_type_name.and_then(|n| self.schema.unwrap().resolve_message(&parent_message.as_ref().unwrap().0, n));
+        let field_type_message = field_type_name.and_then(|n| {
+            self.schema
+                .unwrap()
+                .resolve_message(&parent_message.as_ref().unwrap().0, n)
+        });
         let field_type_message_name = field_type_message.map(|m| m.0.clone());
 
         let value = match wire_type {
             Ok(WireType::VarInt) => WireValue::VarInt(self.decode_varint()?.into()),
             Ok(WireType::I64) => WireValue::I64(self.decode_i64()?.into()),
-            Ok(WireType::LengthDelimited) => WireValue::LengthDelimited(self.decode_length_delimited()?.into()),
+            Ok(WireType::LengthDelimited) => {
+                WireValue::LengthDelimited(self.decode_length_delimited()?.into())
+            }
             Ok(WireType::StartGroup) => WireValue::StartGroup,
             Ok(WireType::EndGroup) => WireValue::EndGroup,
             Ok(WireType::I32) => WireValue::I32(self.decode_i32()?.into()),
@@ -99,7 +125,7 @@ impl <'a> ProtobufDecoder<'a> {
             value,
             name: field.and_then(|f| f.name.clone()),
             protobuf_type: field_type.and_then(|it| it.try_into().ok()),
-            protobuf_type_name: field_type_message_name
+            protobuf_type_name: field_type_message_name,
         })
     }
 
@@ -121,10 +147,12 @@ impl <'a> ProtobufDecoder<'a> {
 
         let mut i: usize = 0;
         while let Ok(byte) = self.take_byte() {
-            result |= (byte as u64 & 0x7F).checked_shl(7 * i as u32).ok_or_else(|| {
-                self.fuse();
-                eyre!("varint overflow")
-            })?;
+            result |= (byte as u64 & 0x7F)
+                .checked_shl(7 * i as u32)
+                .ok_or_else(|| {
+                    self.fuse();
+                    eyre!("varint overflow")
+                })?;
 
             i += 1;
 
@@ -146,14 +174,15 @@ impl <'a> ProtobufDecoder<'a> {
 
     fn decode_length_delimited(&mut self) -> eyre::Result<&'a [u8]> {
         let length: usize = self
-            .decode_varint().wrap_err("error decoding length")
+            .decode_varint()
+            .wrap_err("error decoding length")
             .and_then(|it| it.try_into().wrap_err("length does not fit in usize"))
             .inspect_err(|_| self.fuse())?;
         self.take_slice(length)
     }
 }
 
-impl <'a> Iterator for ProtobufDecoder<'a> {
+impl<'a> Iterator for ProtobufDecoder<'a> {
     type Item = eyre::Result<DecodedEntry<'a>>;
 
     /// Decodes the next direct entry.
@@ -179,7 +208,7 @@ impl <'a> Iterator for ProtobufDecoder<'a> {
     }
 }
 
-impl FusedIterator for ProtobufDecoder <'_> {}
+impl FusedIterator for ProtobufDecoder<'_> {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedEntry<'a> {
@@ -194,7 +223,7 @@ pub struct DecodedEntry<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{*, wire_types::*};
+    use super::{wire_types::*, *};
     use crate::protobuf::wire_types::{I32, I64, LengthDelimited, VarInt};
     use std::assert_matches;
 
@@ -304,9 +333,7 @@ mod tests {
 
     #[test]
     fn decode_len() {
-        const DATA: &[u8] = &[
-            0x0A, 0x05, b'h', b'e', b'l', b'l', b'o',
-        ];
+        const DATA: &[u8] = &[0x0A, 0x05, b'h', b'e', b'l', b'l', b'o'];
 
         let mut decoder = ProtobufDecoder::new(DATA);
 
@@ -322,9 +349,7 @@ mod tests {
 
     #[test]
     fn decode_empty_len() {
-        const DATA: &[u8] = &[
-            0x0A, 0x00,
-        ];
+        const DATA: &[u8] = &[0x0A, 0x00];
 
         let mut decoder = ProtobufDecoder::new(DATA);
 

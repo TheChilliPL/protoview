@@ -1,18 +1,21 @@
+use crate::protobuf::ProtobufDecoder;
+use crate::protobuf::schema::ProtobufSchema;
+use crate::protobuf::wire_types::WireValue;
 use eframe::Frame;
 use eframe::epaint::text::TextWrapMode;
 use egui::text::LayoutJob;
-use egui::{CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea, TextFormat, TextStyle, Ui};
+use egui::{
+    CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea, TextFormat,
+    TextStyle, Ui,
+};
 use rfd::AsyncFileDialog;
+#[cfg(not(target_arch = "wasm32"))]
+use rfd::FileDialog;
 use std::borrow::Cow;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
 use tokio_with_wasm::alias as tokio;
-#[cfg(not(target_arch = "wasm32"))]
-use rfd::FileDialog;
-use crate::protobuf::schema::ProtobufSchema;
-use crate::protobuf::wire_types::WireValue;
-use crate::protobuf::ProtobufDecoder;
 use tracing::debug;
 
 pub enum Message {
@@ -42,7 +45,8 @@ impl ProtoViewApp {
         Self {
             msg,
             schema,
-            rx, tx,
+            rx,
+            tx,
         }
     }
 }
@@ -79,7 +83,9 @@ impl eframe::App for ProtoViewApp {
                             if let Some(file) = dialog_res.await {
                                 debug!("Opening file: {:?}", file);
                                 let bytes = file.read().await.into_boxed_slice();
-                                tx.send(Message::OpenBuffer(bytes)).await.expect("couldn't send message");
+                                tx.send(Message::OpenBuffer(bytes))
+                                    .await
+                                    .expect("couldn't send message");
                             }
                         });
                     }
@@ -94,7 +100,9 @@ impl eframe::App for ProtoViewApp {
                                 debug!("Opening schema: {:?}", file);
                                 let bytes = file.read().await.into_boxed_slice();
                                 let schema = ProtobufSchema::compile_new(bytes).unwrap();
-                                tx.send(Message::OpenSchema(schema)).await.expect("couldn't send message");
+                                tx.send(Message::OpenSchema(schema))
+                                    .await
+                                    .expect("couldn't send message");
                             }
                         });
                     };
@@ -102,27 +110,24 @@ impl eframe::App for ProtoViewApp {
             })
         });
 
-        Panel::right("inspector")
-            .show(ui, |ui| {
-                ScrollArea::both()
-                    .show(ui, |ui| {
-                        ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
-                        ui.heading("Metadata inspector");
+        Panel::right("inspector").show(ui, |ui| {
+            ScrollArea::both().show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
+                ui.heading("Metadata inspector");
 
-                        ui.take_available_space();
-                    });
+                ui.take_available_space();
             });
+        });
 
         CentralPanel::default().show(ui, |ui| {
             if let Some(data) = self.msg.as_deref() {
-                ScrollArea::new(true)
-                    .show(ui, |ui| {
-                        let decoder = ProtobufDecoder::with_schema(data, self.schema.as_ref());
+                ScrollArea::new(true).show(ui, |ui| {
+                    let decoder = ProtobufDecoder::with_schema(data, self.schema.as_ref());
 
-                        show_records(ui, decoder);
+                    show_records(ui, decoder);
 
-                        ui.take_available_space();
-                    });
+                    ui.take_available_space();
+                });
             } else {
                 ui.heading("No file opened");
             }
@@ -159,22 +164,10 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
 
         let field_num = record.field_number;
         let mut lj = LayoutJob::default();
-        lj.append(
-            &format!("{}. ", field_num),
-            18.0,
-            weak_format.clone(),
-        );
+        lj.append(&format!("{}. ", field_num), 18.0, weak_format.clone());
         if let Some(name) = &record.name {
-            lj.append(
-                name,
-                0.0,
-                normal_format.clone(),
-            );
-            lj.append(
-                " = ",
-                0.0,
-                weak_format.clone(),
-            );
+            lj.append(name, 0.0, normal_format.clone());
+            lj.append(" = ", 0.0, weak_format.clone());
         }
         match record.value {
             WireValue::VarInt(v) => {
@@ -183,61 +176,25 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                 let zigzag = v.as_s64();
 
                 if signed >= 0 && signed as u64 == unsigned {
-                    lj.append(
-                        &unsigned.to_string(),
-                        0.0,
-                        strong_format.clone(),
-                    );
+                    lj.append(&unsigned.to_string(), 0.0, strong_format.clone());
                 } else {
-                    lj.append(
-                        &unsigned.to_string(),
-                        0.0,
-                        strong_format.clone(),
-                    );
-                    lj.append(
-                        " / ",
-                        0.0,
-                        weak_format.clone(),
-                    );
-                    lj.append(
-                        &signed.to_string(),
-                        0.0,
-                        strong_format.clone(),
-                    );
+                    lj.append(&unsigned.to_string(), 0.0, strong_format.clone());
+                    lj.append(" / ", 0.0, weak_format.clone());
+                    lj.append(&signed.to_string(), 0.0, strong_format.clone());
                 }
                 if zigzag != 0 {
-                    lj.append(
-                        " / ",
-                        0.0,
-                        weak_format.clone(),
-                    );
-                    lj.append(
-                        &zigzag.to_string(),
-                        0.0,
-                        normal_format.clone(),
-                    );
-                    lj.append(
-                        "z",
-                        0.0,
-                        weak_format.clone(),
-                    );
+                    lj.append(" / ", 0.0, weak_format.clone());
+                    lj.append(&zigzag.to_string(), 0.0, normal_format.clone());
+                    lj.append("z", 0.0, weak_format.clone());
                 }
                 ui.label(lj);
             }
             WireValue::LengthDelimited(v) => {
                 if let Some(path) = &record.protobuf_type_name {
-                    lj.append(
-                        &format!("[{}] ", path),
-                        0.0,
-                        weak_format.clone(),
-                    );
+                    lj.append(&format!("[{}] ", path), 0.0, weak_format.clone());
                 }
                 if v.as_bytes().is_empty() {
-                    lj.append(
-                        "[empty]",
-                        0.0,
-                        normal_format.clone(),
-                    );
+                    lj.append("[empty]", 0.0, normal_format.clone());
                     ui.label(lj);
                     continue;
                 }
@@ -248,22 +205,10 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
 
                 if is_str {
                     let str = str.unwrap();
-                    lj.append(
-                        &format!("{:?}", str),
-                        0.0,
-                        strong_format.clone(),
-                    );
-                    lj.append(
-                        " / ",
-                        0.0,
-                        weak_format.clone()
-                    );
+                    lj.append(&format!("{:?}", str), 0.0, strong_format.clone());
+                    lj.append(" / ", 0.0, weak_format.clone());
                 }
-                lj.append(
-                    "[object] / [bytes]",
-                    0.0,
-                    weak_format.clone(),
-                );
+                lj.append("[object] / [bytes]", 0.0, weak_format.clone());
                 lj.sections[0].leading_space = 0.0;
                 CollapsingHeader::new(lj)
                     .id_salt(hash + i as u64)

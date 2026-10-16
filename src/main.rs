@@ -1,4 +1,3 @@
-use eyre::{eyre, OptionExt};
 use crate::app::ProtoViewApp;
 
 mod app;
@@ -24,22 +23,32 @@ fn main() {
 
     let cli = <Cli as clap::Parser>::parse();
 
-    let buffer = cli.input.map(|path| std::fs::read(path).unwrap().into_boxed_slice());
-    let schema_data = cli.schema.map(|path| std::fs::read(path).unwrap().into_boxed_slice());
+    let buffer = cli
+        .input
+        .map(|path| std::fs::read(path).unwrap().into_boxed_slice());
+    let schema_data = cli
+        .schema
+        .map(|path| std::fs::read(path).unwrap().into_boxed_slice());
     let schema = schema_data.map(|d| protobuf::schema::ProtobufSchema::compile_new(d).unwrap());
 
     let native_opts = eframe::NativeOptions::default();
     eframe::run_native(
         "ProtoView",
         native_opts,
-        Box::new(|cc| Ok(Box::new(ProtoViewApp::new_with_opts(cc, buffer, schema))))
-    ).expect("couldn't create native app");
+        Box::new(|cc| Ok(Box::new(ProtoViewApp::new_with_opts(cc, buffer, schema)))),
+    )
+    .expect("couldn't create native app");
 }
 
 #[cfg(target_arch = "wasm32")]
-fn try_create_panic_message(panic_hook_info: &std::panic::PanicHookInfo, document: &web_sys::Document) -> eyre::Result<()> {
+fn try_create_panic_message(
+    panic_hook_info: &std::panic::PanicHookInfo,
+    document: &web_sys::Document,
+) -> eyre::Result<()> {
     let body = document.body().ok_or_eyre("no body in document")?;
-    let div = document.create_element("div").map_err(|e| eyre!("{:?}", e))?;
+    let div = document
+        .create_element("div")
+        .map_err(|e| eyre!("{:?}", e))?;
     div.set_class_name("error_message");
     div.set_inner_html(&format!(
         "<h1>🦀 Rust panicked!</h1><pre>{}</pre>",
@@ -51,7 +60,9 @@ fn try_create_panic_message(panic_hook_info: &std::panic::PanicHookInfo, documen
 
 #[cfg(target_arch = "wasm32")]
 fn panic_hook(panic_hook_info: &std::panic::PanicHookInfo) {
-    if let Some(window) = web_sys::window() && let Some(document) = window.document() {
+    if let Some(window) = web_sys::window()
+        && let Some(document) = window.document()
+    {
         let _ = try_create_panic_message(panic_hook_info, &document);
     }
 
@@ -61,7 +72,7 @@ fn panic_hook(panic_hook_info: &std::panic::PanicHookInfo) {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast;
-    use tracing_subscriber::filter::{Targets, LevelFilter};
+    use tracing_subscriber::filter::{LevelFilter, Targets};
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -73,7 +84,7 @@ fn main() {
         .with(
             Targets::new()
                 .with_target("protoview", LevelFilter::DEBUG)
-                .with_default(LevelFilter::INFO)
+                .with_default(LevelFilter::INFO),
         )
         .with(tracing_wasm::WASMLayer::default())
         .try_init();
@@ -86,7 +97,8 @@ fn main() {
             .document()
             .expect("no document");
 
-        let canvas = document.get_element_by_id("canvas")
+        let canvas = document
+            .get_element_by_id("canvas")
             .expect("no canvas element")
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("#canvas element not a canvas");
@@ -95,7 +107,9 @@ fn main() {
             .start(
                 canvas,
                 web_opts,
-                Box::new(|cc| Ok(Box::new(ProtoViewApp::new(cc))))
-            ).await.expect("couldn't start app");
+                Box::new(|cc| Ok(Box::new(ProtoViewApp::new(cc)))),
+            )
+            .await
+            .expect("couldn't start app");
     })
 }
