@@ -27,6 +27,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Install Trunk
         run: cargo install trunk --locked
 
