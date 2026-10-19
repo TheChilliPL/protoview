@@ -5,8 +5,8 @@ use eframe::Frame;
 use eframe::epaint::text::TextWrapMode;
 use egui::text::LayoutJob;
 use egui::{
-    CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea, TextFormat,
-    TextStyle, Ui,
+    Button, CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea,
+    TextFormat, TextStyle, Ui,
 };
 use rfd::AsyncFileDialog;
 #[cfg(not(target_arch = "wasm32"))]
@@ -89,6 +89,7 @@ impl eframe::App for ProtoViewApp {
                             }
                         });
                     }
+                    ui.separator();
                     if ui.button("Open schema").clicked() {
                         let dialog_res = AsyncFileDialog::new()
                             .add_filter("Protobuf Schema File", &["proto"])
@@ -106,6 +107,14 @@ impl eframe::App for ProtoViewApp {
                             }
                         });
                     };
+                    if ui
+                        .add_enabled(self.schema.is_some(), Button::new("Close schema"))
+                        .clicked()
+                    {
+                        self.tx
+                            .blocking_send(Message::ClearSchema)
+                            .expect("couldn't send message");
+                    }
                 })
             })
         });
