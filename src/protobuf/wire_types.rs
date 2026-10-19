@@ -60,7 +60,7 @@ impl I64 {
     }
 
     pub fn as_f64(self) -> f64 {
-        self.0 as f64
+        f64::from_bits(self.0)
     }
 }
 
@@ -98,7 +98,7 @@ impl I32 {
     }
 
     pub fn as_f32(self) -> f32 {
-        self.0 as f32
+        f32::from_bits(self.0)
     }
 }
 

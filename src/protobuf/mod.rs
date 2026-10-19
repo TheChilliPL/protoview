@@ -7,7 +7,7 @@ use std::ops::Deref;
 use wire_types::{WireType, WireValue};
 
 pub mod schema;
-mod types;
+pub mod types;
 pub mod wire_types;
 
 #[derive(Clone)]
@@ -93,14 +93,27 @@ impl<'a> ProtobufDecoder<'a> {
         let field = parent_message
             .as_ref()
             .and_then(|(_, p)| p.field.iter().find(|f| f.number() == field_number as i32));
-        let field_type = field.and_then(|f| f.r#type);
+        let field_type = field.and_then(|f| f.r#type).and_then(|it| it.try_into().ok());
         let field_type_name = field.and_then(|f| f.type_name.as_deref());
-        let field_type_message = field_type_name.and_then(|n| {
-            self.schema
-                .unwrap()
-                .resolve_message(&parent_message.as_ref().unwrap().0, n)
-        });
-        let field_type_message_name = field_type_message.map(|m| m.0.clone());
+        let field_type_message = match field_type {
+            Some(ProtobufType::Message) => {
+                field_type_name.and_then(|n| {
+                    self.schema
+                        .unwrap()
+                        .resolve_message(&parent_message.as_ref().unwrap().0, n)
+                        .map(|x| x.0)
+                })
+            }
+            Some(ProtobufType::Enum) => {
+                field_type_name.and_then(|n| {
+                    self.schema
+                        .unwrap()
+                        .resolve_enum(&parent_message.as_ref().unwrap().0, n)
+                        .map(|x| x.0)
+                })
+            },
+            _ => None,
+        };
 
         let value = match wire_type {
             Ok(WireType::VarInt) => WireValue::VarInt(self.decode_varint()?.into()),
@@ -124,8 +137,8 @@ impl<'a> ProtobufDecoder<'a> {
             field_number,
             value,
             name: field.and_then(|f| f.name.clone()),
-            protobuf_type: field_type.and_then(|it| it.try_into().ok()),
-            protobuf_type_name: field_type_message_name,
+            protobuf_type: field_type,
+            protobuf_type_name: field_type_message,
         })
     }
 

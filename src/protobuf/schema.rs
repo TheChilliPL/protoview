@@ -91,7 +91,7 @@ impl ProtobufSchema {
 
         for str in split {
             let Some(msg) = message else {
-                break;
+                return None;
             };
 
             message = msg.nested_type.iter().find(|it| it.name() == str);
@@ -100,17 +100,80 @@ impl ProtobufSchema {
         message.map(|m| (path.to_string(), m))
     }
 
+    pub fn resolve_enum_absolute(
+        &self,
+        path: &str,
+    ) -> Option<(String, &prost_types::EnumDescriptorProto)> {
+        let path = Self::protopath_to_relative(self.root_package().unwrap_or_default(), path)
+            .unwrap_or(path);
+
+        let mut split = path.split(".").filter(|it| !it.is_empty()).peekable();
+        let first = split.next()?;
+        if split.peek().is_none() {
+            return self
+                .inner_file()
+                .enum_type
+                .iter()
+                .find(|it| it.name() == first)
+                .map(|m| (path.to_string(), m));
+        }
+
+        let mut message = {
+            self.inner_file()
+                .message_type
+                .iter()
+                .find(|it| it.name() == first)
+        };
+
+        while let Some(str) = split.next() {
+            if split.peek().is_none() {
+                return message.and_then(|m| {
+                    m.enum_type
+                        .iter()
+                        .find(|it| it.name() == str)
+                        .map(|m| (path.to_string(), m))
+                });
+            }
+
+            let Some(msg) = message else {
+                return None;
+            };
+
+            message = msg.nested_type.iter().find(|it| it.name() == str);
+        }
+
+        None
+    }
+
     pub fn resolve_message(
         &self,
         mut from: &str,
         path: &str,
     ) -> Option<(String, &prost_types::DescriptorProto)> {
-        let file = self.inner_file();
-
         loop {
             let full_path = Self::join_protopath(from, path);
 
             if let Some(value) = self.resolve_message_absolute(&full_path) {
+                return Some(value);
+            }
+
+            if from.is_empty() || from == "." {
+                return None;
+            }
+
+            from = Self::protopath_parent(from);
+        }
+    }
+
+    pub fn resolve_enum(
+        &self,
+        mut from: &str,
+        path: &str,
+    ) -> Option<(String, &prost_types::EnumDescriptorProto)> {
+        loop {
+            let full_path = Self::join_protopath(from, path);
+
+            if let Some(value) = self.resolve_enum_absolute(&full_path) {
                 return Some(value);
             }
 

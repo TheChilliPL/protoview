@@ -4,10 +4,7 @@ use crate::protobuf::wire_types::WireValue;
 use eframe::Frame;
 use eframe::epaint::text::TextWrapMode;
 use egui::text::LayoutJob;
-use egui::{
-    Button, CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea,
-    TextFormat, TextStyle, Ui,
-};
+use egui::{AsIdSalt, Button, CentralPanel, CollapsingHeader, Color32, Context, MenuBar, Panel, ScrollArea, TextFormat, TextStyle, Ui};
 use rfd::AsyncFileDialog;
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
@@ -17,6 +14,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
 use tokio_with_wasm::alias as tokio;
 use tracing::debug;
+use crate::protobuf::types::ProtobufType;
 
 pub enum Message {
     OpenBuffer(Box<[u8]>),
@@ -173,13 +171,31 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
 
         let field_num = record.field_number;
         let mut lj = LayoutJob::default();
-        lj.append(&format!("{}. ", field_num), 18.0, weak_format.clone());
+        lj.append(&format!("{}. ", field_num), 0.0, weak_format.clone());
         if let Some(name) = &record.name {
             lj.append(name, 0.0, normal_format.clone());
             lj.append(" = ", 0.0, weak_format.clone());
         }
+        let salt = hash + i as u64;
         match record.value {
             WireValue::VarInt(v) => {
+                if record.protobuf_type == Some(ProtobufType::Enum) {
+                    let enum_name = record.protobuf_type_name.unwrap();
+                    lj.append(&enum_name, 0.0, weak_format.clone());
+                    lj.append(".", 0.0, weak_format.clone());
+                    let enum_value = v.as_i64() as i32;
+                    let enum_desc = decoder.schema().unwrap()
+                        .resolve_enum_absolute(&enum_name).unwrap()
+                        .1.value.iter().find(|v| v.number == Some(enum_value))
+                        .unwrap().name.as_deref().unwrap();
+                    lj.append(enum_desc, 0.0, strong_format.clone());
+                    lj.append(" = ", 0.0, weak_format.clone());
+                    lj.append(&enum_value.to_string(), 0.0, normal_format.clone());
+
+                    show_empty_entry(ui, lj, salt);
+                    continue;
+                }
+
                 let unsigned = v.as_u64();
                 let signed = v.as_i64();
                 let zigzag = v.as_s64();
@@ -196,7 +212,7 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                     lj.append(&zigzag.to_string(), 0.0, normal_format.clone());
                     lj.append("z", 0.0, weak_format.clone());
                 }
-                ui.label(lj);
+                show_empty_entry(ui, lj, salt);
             }
             WireValue::LengthDelimited(v) => {
                 if let Some(path) = &record.protobuf_type_name {
@@ -218,12 +234,17 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                     lj.append(" / ", 0.0, weak_format.clone());
                 }
                 lj.append("[object] / [bytes]", 0.0, weak_format.clone());
-                lj.sections[0].leading_space = 0.0;
-                CollapsingHeader::new(lj)
-                    .id_salt(hash + i as u64)
-                    .show(ui, |ui| {
-                        show_records(ui, sub_decoder);
-                    });
+                show_entry(ui, lj, salt, Some(|ui: &mut Ui| {
+                    show_records(ui, sub_decoder);
+                }));
+            }
+            WireValue::I32(v) => {
+                lj.append(&format!("{}i", v.as_i32()), 0.0, strong_format.clone());
+                lj.append(&" / ", 0.0, weak_format.clone());
+                lj.append(&format!("{}u", v.as_u32()), 0.0, strong_format.clone());
+                lj.append(&" / ", 0.0, weak_format.clone());
+                lj.append(&format!("{}f", v.as_f32()), 0.0, strong_format.clone());
+                show_empty_entry(ui, lj, salt);
             }
             other => {
                 lj.append(
@@ -233,6 +254,28 @@ fn show_records(ui: &mut Ui, decoder: ProtobufDecoder) {
                 );
                 ui.label(lj);
             }
+        }
+    }
+}
+
+fn show_empty_entry(ui: &mut Ui, text: LayoutJob, id_salt: impl AsIdSalt) {
+    show_entry::<fn(&mut Ui)>(ui, text, id_salt, None);
+}
+fn show_entry<T>(ui: &mut Ui, mut text: LayoutJob, id_salt: impl AsIdSalt, body: Option<T>)
+    where T : FnOnce(&mut Ui) {
+    match body {
+        Some(body) => {
+            CollapsingHeader::new(text)
+                .id_salt(id_salt)
+                .show(ui, body);
+        },
+        None => {
+            if text.sections.is_empty() {
+                text.append("", 0.0, TextFormat::default());
+            }
+            text.sections[0].leading_space += 18.0;
+
+            ui.label(text);
         }
     }
 }
